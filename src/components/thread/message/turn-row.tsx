@@ -22,7 +22,7 @@ import { Button } from '@/components/ui/button';
 import { FileAttachment } from '@/components/thread/file-attachment';
 import ModelIcon, { type ModelType } from '@/components/thread/model-icon';
 import { useThreadContext, useThreadSelector } from '@/context/thread';
-import type { Turn } from '@/components/thread/turns';
+import type { Turn, TurnBlock } from '@/components/thread/turns';
 
 const SANS = 'Geist, sans-serif';
 const MONO = "'Geist Mono', monospace";
@@ -189,6 +189,80 @@ const buttonReset = {
     color: 'inherit',
 } as const;
 
+// Collapse pins its flex column's height mid-tween; shrinkable children would
+// squash and then pop to natural size on the last frame instead of clipping.
+const NO_SHRINK = { flexShrink: 0 } as const;
+
+// ── Tool-call grouping — consecutive web-tool blocks fold into one disclosure
+//    (same header treatment as the reasoning trace). ──
+
+type ToolBlock = Extract<TurnBlock, { kind: 'tool-search' | 'tool-read' }>;
+
+type TurnChunk =
+    | { kind: 'block'; block: Exclude<TurnBlock, ToolBlock>; index: number }
+    | { kind: 'tools'; tools: ToolBlock[]; index: number };
+
+/** Chunk a turn's blocks so consecutive tool calls render as one group. */
+function chunkBlocks(blocks: TurnBlock[]): TurnChunk[] {
+    const chunks: TurnChunk[] = [];
+    blocks.forEach((block, index) => {
+        if (block.kind === 'tool-search' || block.kind === 'tool-read') {
+            const last = chunks.at(-1);
+            if (last?.kind === 'tools') last.tools.push(block);
+            else chunks.push({ kind: 'tools', tools: [block], index });
+        } else {
+            chunks.push({ kind: 'block', block, index });
+        }
+    });
+    return chunks;
+}
+
+/** "Searched the web 2 times · read 4 pages", or what's running right now. */
+function toolGroupLabel(tools: ToolBlock[]): string {
+    const running = tools.find(tool => tool.status === 'running');
+    if (running) {
+        if (running.kind === 'tool-search') return 'Searching the web…';
+        const domain = domainOf(running.url);
+        return domain ? `Reading ${domain}…` : 'Reading…';
+    }
+    const searches = tools.filter(tool => tool.kind === 'tool-search').length;
+    const reads = tools.length - searches;
+    const parts: string[] = [];
+    if (searches > 0) {
+        parts.push(`Searched the web${searches > 1 ? ` ${searches} times` : ''}`);
+    }
+    if (reads > 0) parts.push(`read ${reads} page${reads === 1 ? '' : 's'}`);
+    const label = parts.join(' · ');
+    return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function ToolCardFor({ block }: { block: ToolBlock }): ReactNode {
+    if (block.kind === 'tool-search') {
+        return (
+            <ToolCard
+                icon={<GlobeIcon className="size-3.5" />}
+                label={block.status === 'running' ? 'Searching the web' : 'Searched the web'}
+                detail={block.query}
+                meta={
+                    block.sources.length > 0
+                        ? `${block.sources.length} result${block.sources.length === 1 ? '' : 's'}`
+                        : undefined
+                }
+                running={block.status === 'running'}
+            />
+        );
+    }
+    return (
+        <ToolCard
+            icon={<FileTextIcon className="size-3.5" />}
+            label={block.status === 'running' ? 'Reading' : 'Read'}
+            detail={block.title || domainOf(block.url)}
+            meta={domainOf(block.url)}
+            running={block.status === 'running'}
+        />
+    );
+}
+
 export function TurnRow(turn: Turn): ReactNode {
     // Mugen hooks may only be called directly inside the render function, so
     // per-row state lives here and flows into the (hook-free) turn components.
@@ -273,7 +347,39 @@ function AssistantTurn({
                 </Text>
             ) : null}
 
-            {turn.blocks.map((block, i) => {
+            {chunkBlocks(turn.blocks).map(chunk => {
+                if (chunk.kind === 'tools') {
+                    const i = chunk.index;
+                    const done = chunk.tools.every(tool => tool.status === 'done');
+                    const open = openMap[i] ?? !done;
+                    return (
+                        <VStack key={i}>
+                            <Disclosure
+                                padding={2}
+                                onClick={() => setOpenMap({ ...openMap, [i]: !open })}
+                                style={{ ...buttonReset, borderRadius: 6 }}
+                            >
+                                <Text font={`500 12px ${MONO}`} lineHeight={16} color={INK.muted}>
+                                    {toolGroupLabel(chunk.tools)}
+                                </Text>
+                            </Disclosure>
+                            <Collapse id={`tools-${i}`} open={open}>
+                                <VStack style={NO_SHRINK}>
+                                    <VStack height={10} />
+                                    <VStack gap={6}>
+                                        {chunk.tools.map((tool, t) => (
+                                            <Escape key={t} height={40}>
+                                                <ToolCardFor block={tool} />
+                                            </Escape>
+                                        ))}
+                                    </VStack>
+                                </VStack>
+                            </Collapse>
+                        </VStack>
+                    );
+                }
+
+                const { block, index: i } = chunk;
                 // The newest block of the streaming turn fades appended text in
                 // via <Markdown fade> — the row never animates, heights stay exact.
                 const fading = turn.streaming && i === turn.blocks.length - 1;
@@ -295,21 +401,23 @@ function AssistantTurn({
                                 </Text>
                             </Disclosure>
                             <Collapse id={`reasoning-${i}`} open={open}>
-                                {/* Spacer inside the collapse so the gap animates with it. */}
-                                <VStack height={10} />
-                                <HStack gap={13} align="stretch">
-                                    <VStack
-                                        width={2}
-                                        style={{ background: INK.hairline, borderRadius: 2 }}
-                                    />
-                                    <VStack gap={10}>
-                                        <Markdown
-                                            source={block.text}
-                                            theme={REASONING_MD_THEME}
-                                            fade={fading && !block.done}
+                                <VStack style={NO_SHRINK}>
+                                    {/* Spacer inside the collapse so the gap animates with it. */}
+                                    <VStack height={10} />
+                                    <HStack gap={13} align="stretch">
+                                        <VStack
+                                            width={2}
+                                            style={{ background: INK.hairline, borderRadius: 2 }}
                                         />
-                                    </VStack>
-                                </HStack>
+                                        <VStack gap={10}>
+                                            <Markdown
+                                                source={block.text}
+                                                theme={REASONING_MD_THEME}
+                                                fade={fading && !block.done}
+                                            />
+                                        </VStack>
+                                    </HStack>
+                                </VStack>
                             </Collapse>
                         </VStack>
                     );
@@ -330,38 +438,6 @@ function AssistantTurn({
                                 {block.text}
                             </Text>
                         </HStack>
-                    );
-                }
-
-                if (block.kind === 'tool-search') {
-                    return (
-                        <Escape key={i} height={40}>
-                            <ToolCard
-                                icon={<GlobeIcon className="size-3.5" />}
-                                label={block.status === 'running' ? 'Searching the web' : 'Searched the web'}
-                                detail={block.query}
-                                meta={
-                                    block.sources.length > 0
-                                        ? `${block.sources.length} result${block.sources.length === 1 ? '' : 's'}`
-                                        : undefined
-                                }
-                                running={block.status === 'running'}
-                            />
-                        </Escape>
-                    );
-                }
-
-                if (block.kind === 'tool-read') {
-                    return (
-                        <Escape key={i} height={40}>
-                            <ToolCard
-                                icon={<FileTextIcon className="size-3.5" />}
-                                label={block.status === 'running' ? 'Reading' : 'Read'}
-                                detail={block.title || domainOf(block.url)}
-                                meta={domainOf(block.url)}
-                                running={block.status === 'running'}
-                            />
-                        </Escape>
                     );
                 }
 
