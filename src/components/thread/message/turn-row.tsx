@@ -1,4 +1,5 @@
 import {
+    Collapse,
     definePrimitive,
     Escape,
     HStack,
@@ -283,7 +284,7 @@ function AssistantTurn({
                         ? `Thought${block.seconds ? ` for ${block.seconds}s` : ''}`
                         : 'Thinking…';
                     return (
-                        <VStack key={i} gap={open ? 10 : 0}>
+                        <VStack key={i}>
                             <Disclosure
                                 padding={2}
                                 onClick={() => setOpenMap({ ...openMap, [i]: !open })}
@@ -293,7 +294,9 @@ function AssistantTurn({
                                     {label}
                                 </Text>
                             </Disclosure>
-                            {open ? (
+                            <Collapse id={`reasoning-${i}`} open={open}>
+                                {/* Spacer inside the collapse so the gap animates with it. */}
+                                <VStack height={10} />
                                 <HStack gap={13} align="stretch">
                                     <VStack
                                         width={2}
@@ -307,7 +310,7 @@ function AssistantTurn({
                                         />
                                     </VStack>
                                 </HStack>
-                            ) : null}
+                            </Collapse>
                         </VStack>
                     );
                 }
