@@ -19,6 +19,7 @@ export const REASONING_EFFORTS: Record<string, readonly Effort[]> = {
     'openai/gpt-5.5-pro': ['medium', 'high', 'xhigh'],
     'anthropic/claude-opus-4.8': ['low', 'medium', 'high', 'xhigh', 'max'],
     'anthropic/claude-sonnet-4.6': ['low', 'medium', 'high', 'max'],
+    'anthropic/claude-sonnet-5': ['low', 'medium', 'high', 'xhigh'],
     'anthropic/claude-fable-5': ['low', 'medium', 'high', 'xhigh', 'max'],
     'google/gemini-3-pro-preview': ['low', 'high'],
     'google/gemini-3.1-pro-preview': ['low', 'medium', 'high'],
